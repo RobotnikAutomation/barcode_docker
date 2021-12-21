@@ -9,8 +9,10 @@ import actionlib
 # Insert here msg and srv imports:
 from std_msgs.msg import String
 from robotnik_msgs.msg import Registers
+from actionlib_msgs.msg import GoalStatus
 
-from robotnik_navigation_msgs.msg import DockAction, DockFeedback, DockResult
+from robotnik_navigation_msgs.msg import BarcodeDockAction, BarcodeDockFeedback, BarcodeDockResult, BarcodeDockGoal
+from robotnik_navigation_msgs.msg import MoveAction, MoveGoal
 
 
 class BarcodeDocker(RComponent):
@@ -28,8 +30,10 @@ class BarcodeDocker(RComponent):
 
         self.modbus_io_sub_name = rospy.get_param(
             '~modbus_io_sub_name', 'robotnik_roller_belt_modbus_io/registers')
-        self.barcode_dock_action_name = rospy.get_param(
-            '~barcode_dock_action_name', 'barcode_docker')
+        self.barcode_dock_namespace = rospy.get_param(
+            '~barcode_dock_namespace', 'barcode_docker')
+        self.move_namespace = rospy.get_param(
+            '~move_namespace', 'move')
 
     def ros_setup(self):
         """Creates and inits ROS components"""
@@ -51,16 +55,21 @@ class BarcodeDocker(RComponent):
         #self.example_server = rospy.Service(
         #    '~example', Trigger, self.example_server_cb)
 
+        # Actionlib client
+        self.move_action_client = actionlib.SimpleActionClient(self.move_namespace, MoveAction)
+        self.move_action_client.wait_for_server()
+
         # Actionlib server
-        self.barcode_dock_action = actionlib.SimpleActionServer(self.barcode_dock_action_name, DockAction, None, auto_start=False)
-        self.barcode_dock_action.register_goal_callback(self.barcode_dock_goal_cb)
-        self.barcode_dock_action.register_preempt_callback(self.barcode_dock_preempt_cb)
-        self.barcode_dock_action.start()
+        self.barcode_dock_action_server = actionlib.SimpleActionServer(self.barcode_dock_namespace, BarcodeDockAction, None, auto_start=False)
+        self.barcode_dock_action_server.register_goal_callback(self.barcode_dock_goal_cb)
+        self.barcode_dock_action_server.register_preempt_callback(self.barcode_dock_preempt_cb)
+        self.barcode_dock_action_server.start()
 
         return 0
 
     def init_state(self):
         self.running_barcode_dock = False
+        self.goal = BarcodeDockGoal()
 
         return RComponent.init_state(self)
 
@@ -82,29 +91,47 @@ class BarcodeDocker(RComponent):
         #self.status_pub.publish(self.status)
         #self.status_stamped_pub.publish(status_stamped)
 
-        # Publish actionlib feedback
-        finished = False
+        # If barcode_docker actionlib is running
         if (self.running_barcode_dock == True):
+            finished = False
 
-            if self.barcode_dock_action.is_preempt_requested():
-                rospy.loginfo('%s: Preempted' % self.barcode_dock_action_name)
-                self.barcode_dock_action.set_preempted()
+            if self.barcode_dock_action_server.is_preempt_requested():
+                rospy.loginfo('%s: Preempted' % self.barcode_dock_namespace)
+                self.barcode_dock_action_server.set_preempted()
 
-            finished = True
-            #self.barcode_dock_feedback.header.stamp = rospy.Time.now()
-            barcode_dock_feedback = DockFeedback()
-            barcode_dock_feedback.remaining.x = 1.0
-            self.barcode_dock_action.publish_feedback(barcode_dock_feedback)
+            # Get pending movement
+            if (self.goal.barcode == "front"):
+                    move_y = self.goal.goal.y - self.barcode_pos_front
+            elif (self.goal.barcode == "rear"):
+                move_y = self.goal.goal.y - self.barcode_pos_rear
+
+            # If already executing move action
+            if (self.move_action_client.get_state()==GoalStatus.ACTIVE):
+                # Wait until move action finish
+                pass
+            else:
+                # Check difference between goal and current position
+                if (move_y > 0.01): # TODO set threshold param
+                    goal = MoveGoal()
+                    goal.goal.y = move_y
+                    self.move_action_client.send_goal(goal)
+                else:
+                    finished = True
+
+            # Publish feedback
+            barcode_dock_feedback = BarcodeDockFeedback()
+            barcode_dock_feedback.remaining.y = move_y
+            self.barcode_dock_action_server.publish_feedback(barcode_dock_feedback)
             
+            # End docker action
             if (finished == True):
-                barcode_dock_result = DockResult()
-                #barcode_dock_result.header.stamp = rospy.Time.now()
+                barcode_dock_result = BarcodeDockResult()
                 barcode_dock_result.success = True
                 description = "Barcode docking finished successfully"
                 barcode_dock_result.description = description
                 rospy.loginfo('%s::action_goal_cb: %s.' %
                              (self._node_name, description))
-                self.barcode_dock_action.set_succeeded(barcode_dock_result)
+                self.barcode_dock_action_server.set_succeeded(barcode_dock_result)
                 self.running_barcode_dock = False
 
         return RComponent.ready_state(self)
@@ -142,17 +169,17 @@ class BarcodeDocker(RComponent):
         Accepts the new goal if not command running.  Rejects the incoming
         goal if a command is running
         """
-        if self.barcode_dock_action.is_active() == False:
-            self.goal = self.barcode_dock_action.accept_new_goal()
+        if self.barcode_dock_action_server.is_active() == False:
+            self.goal = self.barcode_dock_action_server.accept_new_goal()
 
             # Docking process not allowed if the component is not ready
             if self._state != State.READY_STATE:
                 msg = 'Docking process not allowed because the component is not READY'
                 rospy.logerr('%s::barcode_dock_goal_cb: %s' % (self._node_name, msg))
-                result = DockResult()
+                result = BarcodeDockResult()
                 result.success = False
                 result.description = msg
-                self.barcode_dock_action.set_aborted(result=result, text=result.description)
+                self.barcode_dock_action_server.set_aborted(result=result, text=result.description)
 
             # TODO Before sending the command to the handler, it is validated
             is_valid = True
@@ -164,11 +191,11 @@ class BarcodeDocker(RComponent):
                 # Aborting the action
                 rospy.logerr('%s::action_goal_cb: The goal is not valid.' %
                              (self._node_name))
-                result = DockResult()
+                result = BarcodeDockResult()
                 result.success = False
                 result.description = "The goal is not valid"
 
-                self.barcode_dock_action.set_aborted(
+                self.barcode_dock_action_server.set_aborted(
                     result=result, text=result.description)
 
         else:
@@ -182,17 +209,17 @@ class BarcodeDocker(RComponent):
         Cancels the current active goal or ignore the incoming goal if
         the preempt request has been triggered by new goal available.
         """
-        if self.barcode_dock_action.is_active():
-            has_new_goal = self.barcode_dock_action.is_new_goal_available()
+        if self.barcode_dock_action_server.is_active():
+            has_new_goal = self.barcode_dock_action_server.is_new_goal_available()
             # If preempt request by new action
             if has_new_goal == False:
                 self.running_barcode_dock = False
                 rospy.logwarn(
                     '%s::barcode_dock_preempt_cb: cancelled current docking action', self._node_name)
-                result = DockResult()
+                result = BarcodeDockResult()
                 result.success = True
                 result.description = "The docking action has been canceled by the user"
-                self.barcode_dock_action.set_aborted(
+                self.barcode_dock_action_server.set_aborted(
                     result=result, text=result.description)
             else:
                 rospy.logwarn(
