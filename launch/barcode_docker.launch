@@ -12,9 +12,6 @@
 	<arg name="move_namespace" default="move" />
 	<arg name="max_threshold" default="0.005" />
 
-	<!-- Load .yaml example -->
-	<rosparam file="$(find barcode_docker)/config/example.yaml" command="load" />
-
 	<!--group ns="$(arg id_robot)"-->
 
 		<!-- start BarcodeDocker node -->
