@@ -6,8 +6,11 @@
 
 	<!-- Desired frequency -->
 	<arg name="desired_freq" default="10.0" />
-	<!-- Name of the example of a subscriber -->
-	<arg name="example_subscriber_name" default="example" />
+	
+	<arg name="modbus_io_sub_name" default="robotnik_roller_belt_modbus_io/registers" />
+	<arg name="barcode_dock_namespace" default="barcode_docker" />
+	<arg name="move_namespace" default="move" />
+	<arg name="max_threshold" default="0.005" />
 
 	<!-- Load .yaml example -->
 	<rosparam file="$(find barcode_docker)/config/example.yaml" command="load" />
@@ -17,7 +20,11 @@
 		<!-- start BarcodeDocker node -->
 		<node name="barcode_docker" pkg="barcode_docker" type="barcode_docker_node.py" output="screen" respawn="false">
 			<param name="desired_freq" value="$(arg desired_freq)"/>
-			<param name="example_subscriber_name" value="$(arg example_subscriber_name)"/>
+
+			<param name="modbus_io_sub_name" value="$(arg modbus_io_sub_name)"/>
+			<param name="barcode_dock_namespace" value="$(arg barcode_dock_namespace)"/>
+			<param name="move_namespace" value="$(arg move_namespace)"/>
+			<param name="max_threshold" value="$(arg max_threshold)"/>
 		</node>
 
 	<!--/group-->

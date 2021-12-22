@@ -34,6 +34,8 @@ class BarcodeDocker(RComponent):
             '~barcode_dock_namespace', 'barcode_docker')
         self.move_namespace = rospy.get_param(
             '~move_namespace', 'move')
+        self.max_threshold = rospy.get_param(
+            '~max_threshold', 0.005)
 
     def ros_setup(self):
         """Creates and inits ROS components"""
@@ -100,10 +102,22 @@ class BarcodeDocker(RComponent):
                 self.barcode_dock_action_server.set_preempted()
 
             # Get pending movement
-            if (self.goal.barcode == "front"):
-                    move_y = self.goal.goal.y - self.barcode_pos_front
-            elif (self.goal.barcode == "rear"):
-                move_y = self.goal.goal.y - self.barcode_pos_rear
+            if (self.goal.barcode_id == "front" and self.barcode_pos_front != 0):
+                move_y = (self.goal.position - self.barcode_pos_front) / 1000.0
+            elif (self.goal.barcode_id == "rear" and self.barcode_pos_rear != 0):
+                move_y = (self.goal.position - self.barcode_pos_rear) / 1000.0
+            else:
+                self.running_barcode_dock = False
+                # Aborting the action
+                if (self.move_action_client.get_state()==GoalStatus.ACTIVE):
+                    self.move_action_client.cancel_all_goals()
+                msg = self._node_name+'::action_goal_cb: The barcode cannot be read or barcode_id '+self.goal.barcode_id+' is not valid.'
+                rospy.logerr(msg)
+                result = BarcodeDockResult()
+                result.success = False
+                result.description = msg
+                self.barcode_dock_action_server.set_aborted(result=result, text=result.description)
+                return RComponent.ready_state(self)
 
             # If already executing move action
             if (self.move_action_client.get_state()==GoalStatus.ACTIVE):
@@ -111,7 +125,7 @@ class BarcodeDocker(RComponent):
                 pass
             else:
                 # Check difference between goal and current position
-                if (move_y > 0.01): # TODO set threshold param
+                if (abs(move_y) > self.max_threshold):
                     goal = MoveGoal()
                     goal.goal.y = move_y
                     self.move_action_client.send_goal(goal)
@@ -218,9 +232,11 @@ class BarcodeDocker(RComponent):
                     '%s::barcode_dock_preempt_cb: cancelled current docking action', self._node_name)
                 result = BarcodeDockResult()
                 result.success = True
-                result.description = "The docking action has been canceled by the user"
+                result.description = "The docking action has been cancelled by the user"
                 self.barcode_dock_action_server.set_aborted(
                     result=result, text=result.description)
+                if (self.move_action_client.get_state()==GoalStatus.ACTIVE):
+                    self.move_action_client.cancel_all_goals()
             else:
                 rospy.logwarn(
                     '%s::barcode_dock_preempt_cb: preemption due to a new goal is not allowed', self._node_name)
