@@ -5,6 +5,7 @@ from rcomponent.rcomponent import *
 
 # Insert here general imports:
 import actionlib
+import numpy as np
 
 # Insert here msg and srv imports:
 from std_msgs.msg import String
@@ -171,11 +172,17 @@ class BarcodeDocker(RComponent):
 
     def modbus_io_sub_cb(self, msg):
         try:
-            self.barcode_pos_front = msg.registers[0].value
-            self.barcode_pos_rear = msg.registers[1].value
+            front_low = np.binary_repr(np.int16(msg.registers[0].value), width=16)
+            front_high = np.binary_repr(np.int16(msg.registers[1].value), width=16)
+            self.barcode_pos_front = int(front_high + front_low, 2)
+
+            rear_low = np.binary_repr(np.int16(msg.registers[2].value), width=16)
+            rear_high = np.binary_repr(np.int16(msg.registers[3].value), width=16)
+            self.barcode_pos_rear = int(rear_high + rear_low, 2)
+
             self.tick_topics_health('modbus_io_sub')
         except:
-            rospy.logerr("Error reading barcode position. Is register 0 publishing?")
+            rospy.logerr("Error reading barcode position. Is register 0 to 3 being published?")
 
 
     def barcode_dock_goal_cb(self):
