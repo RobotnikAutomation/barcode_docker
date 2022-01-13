@@ -106,7 +106,7 @@ class BarcodeDocker(RComponent):
             if (self.goal.barcode_id == "front" and self.barcode_pos_front != 0):
                 move_y = (self.goal.position - self.barcode_pos_front) / 1000.0
             elif (self.goal.barcode_id == "rear" and self.barcode_pos_rear != 0):
-                move_y = (self.goal.position - self.barcode_pos_rear) / 1000.0
+                move_y = -(self.goal.position - self.barcode_pos_rear) / 1000.0
             else:
                 self.running_barcode_dock = False
                 # Aborting the action
